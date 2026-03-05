@@ -1,0 +1,590 @@
+-- ============================================================
+--  Case Paradise | Auto Open & Auto Sell — GUI Script
+--  Type: LocalScript
+--  Place inside: StarterPlayerScripts
+-- ============================================================
+
+-- ============================================================
+--  SERVICES
+-- ============================================================
+
+local Players            = game:GetService("Players")
+local ReplicatedStorage  = game:GetService("ReplicatedStorage")
+local TweenService       = game:GetService("TweenService")
+local UserInputService   = game:GetService("UserInputService")
+local RunService         = game:GetService("RunService")
+
+local LocalPlayer        = Players.LocalPlayer
+local PlayerGui          = LocalPlayer:WaitForChild("PlayerGui")
+
+-- ============================================================
+--  DEFAULT CONFIG (can be changed via GUI at runtime)
+-- ============================================================
+
+local CONFIG = {
+	CASE_NAME             = "Starter Case",   -- Name of the case to open
+	SELL_DELAY            = 60,               -- Seconds to wait before selling
+	KEEP_VALUE_THRESHOLD  = 500,              -- Sell items worth less than this
+	LOOP_DELAY            = 5,                -- Seconds between each full loop
+	DEBUG                 = true,             -- Print logs to Output
+}
+
+-- ============================================================
+--  SCRIPT STATE
+-- ============================================================
+
+local isRunning    = false   -- Is the auto-loop active?
+local loopThread   = nil     -- Holds the coroutine/task so we can stop it
+local statusMsg    = "Idle"  -- Current status shown in the GUI
+
+-- ============================================================
+--  HELPER: Debug logger
+-- ============================================================
+
+local function debugLog(msg)
+	if CONFIG.DEBUG then
+		print("[CaseParadise] " .. tostring(msg))
+	end
+end
+
+-- ============================================================
+--  HELPER: Find a remote by name in ReplicatedStorage
+-- ============================================================
+
+local function findRemote(name)
+	local remote = ReplicatedStorage:FindFirstChild(name, true)
+	if not remote then
+		debugLog("WARNING: Remote not found: " .. name)
+	end
+	return remote
+end
+
+-- ============================================================
+--  HELPER: Safely fire a RemoteEvent
+-- ============================================================
+
+local function safeFireRemote(remote, ...)
+	if not remote then return false end
+	local ok, err = pcall(function() remote:FireServer(...) end)
+	if not ok then debugLog("FireRemote error: " .. tostring(err)) end
+	return ok
+end
+
+-- ============================================================
+--  HELPER: Safely invoke a RemoteFunction
+-- ============================================================
+
+local function safeInvokeRemote(remote, ...)
+	if not remote then return nil end
+	local ok, result = pcall(function() return remote:InvokeServer(...) end)
+	return ok and result or nil
+end
+
+-- ============================================================
+--  CORE: Open a case by name
+-- ============================================================
+
+local function openCase(caseName)
+	debugLog("Opening case: " .. caseName)
+	local remote = findRemote("OpenCase") -- ← update name if needed
+	return safeFireRemote(remote, caseName)
+end
+
+-- ============================================================
+--  CORE: Get inventory from server
+-- ============================================================
+
+local function getInventory()
+	local remote = findRemote("GetInventory") -- ← update name if needed
+	return safeInvokeRemote(remote)
+end
+
+-- ============================================================
+--  CORE: Sell one item
+-- ============================================================
+
+local function sellItem(item)
+	local remote = findRemote("SellItem") -- ← update name if needed
+	local id = item.Id or item.UUID or item.Name or item
+	return safeFireRemote(remote, id)
+end
+
+-- ============================================================
+--  CORE: Sell all items below threshold
+-- ============================================================
+
+local function sellLowValueItems()
+	debugLog("Selling items below value: " .. CONFIG.KEEP_VALUE_THRESHOLD)
+	local inventory = getInventory()
+	if not inventory then
+		debugLog("No inventory returned.")
+		return 0, 0
+	end
+
+	local sold, kept = 0, 0
+	for _, item in ipairs(inventory) do
+		local val = item.Value or item.Price or item.Worth or 0
+		if val < CONFIG.KEEP_VALUE_THRESHOLD then
+			if sellItem(item) then sold += 1 end
+			task.wait(0.1)
+		else
+			kept += 1
+		end
+	end
+	debugLog("Sold: " .. sold .. " | Kept: " .. kept)
+	return sold, kept
+end
+
+-- ============================================================
+--  BUILD THE GUI
+-- ============================================================
+
+-- Remove any existing GUI (prevents duplicates on respawn)
+if PlayerGui:FindFirstChild("CaseParadiseGUI") then
+	PlayerGui:FindFirstChild("CaseParadiseGUI"):Destroy()
+end
+
+-- ScreenGui container
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name             = "CaseParadiseGUI"
+ScreenGui.ResetOnSpawn     = false   -- Keep GUI alive through respawns
+ScreenGui.ZIndexBehavior   = Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent           = PlayerGui
+
+-- ── Main Window Frame ────────────────────────────────────────
+local Window = Instance.new("Frame")
+Window.Name             = "Window"
+Window.Size             = UDim2.new(0, 320, 0, 370)
+Window.Position         = UDim2.new(0, 40, 0, 40)
+Window.BackgroundColor3 = Color3.fromRGB(14, 14, 20)
+Window.BorderSizePixel  = 0
+Window.ClipsDescendants = true
+Window.Parent           = ScreenGui
+
+-- Rounded corners on main window
+local WinCorner = Instance.new("UICorner")
+WinCorner.CornerRadius = UDim.new(0, 12)
+WinCorner.Parent       = Window
+
+-- Subtle border glow
+local WinStroke = Instance.new("UIStroke")
+WinStroke.Color     = Color3.fromRGB(120, 80, 255)
+WinStroke.Thickness = 1.5
+WinStroke.Parent    = Window
+
+-- ── Title Bar ────────────────────────────────────────────────
+local TitleBar = Instance.new("Frame")
+TitleBar.Name             = "TitleBar"
+TitleBar.Size             = UDim2.new(1, 0, 0, 46)
+TitleBar.BackgroundColor3 = Color3.fromRGB(22, 16, 40)
+TitleBar.BorderSizePixel  = 0
+TitleBar.Parent           = Window
+
+local TitleCorner = Instance.new("UICorner")
+TitleCorner.CornerRadius = UDim.new(0, 12)
+TitleCorner.Parent       = TitleBar
+
+-- Fix bottom corners of title bar (so it doesn't round at bottom)
+local TitleFix = Instance.new("Frame")
+TitleFix.Size             = UDim2.new(1, 0, 0.5, 0)
+TitleFix.Position         = UDim2.new(0, 0, 0.5, 0)
+TitleFix.BackgroundColor3 = Color3.fromRGB(22, 16, 40)
+TitleFix.BorderSizePixel  = 0
+TitleFix.Parent           = TitleBar
+
+-- Accent line under title bar
+local TitleAccent = Instance.new("Frame")
+TitleAccent.Size             = UDim2.new(1, 0, 0, 2)
+TitleAccent.Position         = UDim2.new(0, 0, 1, -2)
+TitleAccent.BackgroundColor3 = Color3.fromRGB(120, 80, 255)
+TitleAccent.BorderSizePixel  = 0
+TitleAccent.Parent           = TitleBar
+
+-- Title label
+local TitleLabel = Instance.new("TextLabel")
+TitleLabel.Size              = UDim2.new(1, -50, 1, 0)
+TitleLabel.Position          = UDim2.new(0, 14, 0, 0)
+TitleLabel.BackgroundTransparency = 1
+TitleLabel.Text              = "⬡  Case Paradise"
+TitleLabel.TextColor3        = Color3.fromRGB(220, 200, 255)
+TitleLabel.Font              = Enum.Font.GothamBold
+TitleLabel.TextSize          = 15
+TitleLabel.TextXAlignment    = Enum.TextXAlignment.Left
+TitleLabel.Parent            = TitleBar
+
+-- Minimise button
+local MinBtn = Instance.new("TextButton")
+MinBtn.Name              = "MinBtn"
+MinBtn.Size              = UDim2.new(0, 28, 0, 28)
+MinBtn.Position          = UDim2.new(1, -38, 0.5, -14)
+MinBtn.BackgroundColor3  = Color3.fromRGB(40, 30, 65)
+MinBtn.Text              = "–"
+MinBtn.TextColor3        = Color3.fromRGB(200, 180, 255)
+MinBtn.Font              = Enum.Font.GothamBold
+MinBtn.TextSize          = 16
+MinBtn.BorderSizePixel   = 0
+MinBtn.Parent            = TitleBar
+
+local MinCorner = Instance.new("UICorner")
+MinCorner.CornerRadius = UDim.new(0, 6)
+MinCorner.Parent       = MinBtn
+
+-- ── Content Area ─────────────────────────────────────────────
+local Content = Instance.new("Frame")
+Content.Name             = "Content"
+Content.Size             = UDim2.new(1, 0, 1, -46)
+Content.Position         = UDim2.new(0, 0, 0, 46)
+Content.BackgroundTransparency = 1
+Content.Parent           = Window
+
+local ContentLayout = Instance.new("UIListLayout")
+ContentLayout.Padding         = UDim.new(0, 10)
+ContentLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+ContentLayout.Parent          = Content
+
+local ContentPadding = Instance.new("UIPadding")
+ContentPadding.PaddingTop    = UDim.new(0, 14)
+ContentPadding.PaddingBottom = UDim.new(0, 14)
+ContentPadding.PaddingLeft   = UDim.new(0, 16)
+ContentPadding.PaddingRight  = UDim.new(0, 16)
+ContentPadding.Parent        = Content
+
+-- ── Helper: Create a labelled input row ─────────────────────
+--  Returns the TextBox so we can read it later
+local function makeInputRow(labelText, defaultValue, placeholder)
+	local Row = Instance.new("Frame")
+	Row.Name             = labelText .. "Row"
+	Row.Size             = UDim2.new(1, 0, 0, 54)
+	Row.BackgroundColor3 = Color3.fromRGB(20, 18, 32)
+	Row.BorderSizePixel  = 0
+	Row.Parent           = Content
+
+	local RowCorner = Instance.new("UICorner")
+	RowCorner.CornerRadius = UDim.new(0, 8)
+	RowCorner.Parent       = Row
+
+	local RowStroke = Instance.new("UIStroke")
+	RowStroke.Color     = Color3.fromRGB(50, 40, 80)
+	RowStroke.Thickness = 1
+	RowStroke.Parent    = Row
+
+	local Lbl = Instance.new("TextLabel")
+	Lbl.Size             = UDim2.new(1, -12, 0, 18)
+	Lbl.Position         = UDim2.new(0, 10, 0, 6)
+	Lbl.BackgroundTransparency = 1
+	Lbl.Text             = labelText
+	Lbl.TextColor3       = Color3.fromRGB(150, 130, 200)
+	Lbl.Font             = Enum.Font.Gotham
+	Lbl.TextSize         = 11
+	Lbl.TextXAlignment   = Enum.TextXAlignment.Left
+	Lbl.Parent           = Row
+
+	local Box = Instance.new("TextBox")
+	Box.Size             = UDim2.new(1, -20, 0, 24)
+	Box.Position         = UDim2.new(0, 10, 0, 24)
+	Box.BackgroundColor3 = Color3.fromRGB(30, 26, 50)
+	Box.Text             = tostring(defaultValue)
+	Box.PlaceholderText  = placeholder or ""
+	Box.PlaceholderColor3= Color3.fromRGB(80, 70, 110)
+	Box.TextColor3       = Color3.fromRGB(230, 220, 255)
+	Box.Font             = Enum.Font.GothamMedium
+	Box.TextSize         = 13
+	Box.ClearTextOnFocus = false
+	Box.BorderSizePixel  = 0
+	Box.TextXAlignment   = Enum.TextXAlignment.Left
+	Box.Parent           = Row
+
+	local BoxPad = Instance.new("UIPadding")
+	BoxPad.PaddingLeft = UDim.new(0, 8)
+	BoxPad.Parent      = Box
+
+	local BoxCorner = Instance.new("UICorner")
+	BoxCorner.CornerRadius = UDim.new(0, 5)
+	BoxCorner.Parent       = Box
+
+	return Box
+end
+
+-- ── Input Fields ─────────────────────────────────────────────
+local CaseNameBox    = makeInputRow("CASE NAME",            CONFIG.CASE_NAME,            "e.g. Starter Case")
+local SellDelayBox   = makeInputRow("SELL DELAY (seconds)", CONFIG.SELL_DELAY,           "e.g. 60")
+local ThresholdBox   = makeInputRow("KEEP VALUE THRESHOLD", CONFIG.KEEP_VALUE_THRESHOLD, "e.g. 500")
+
+-- ── Status Bar ───────────────────────────────────────────────
+local StatusRow = Instance.new("Frame")
+StatusRow.Name             = "StatusRow"
+StatusRow.Size             = UDim2.new(1, 0, 0, 32)
+StatusRow.BackgroundColor3 = Color3.fromRGB(20, 18, 32)
+StatusRow.BorderSizePixel  = 0
+StatusRow.Parent           = Content
+
+local StatusCorner = Instance.new("UICorner")
+StatusCorner.CornerRadius = UDim.new(0, 8)
+StatusCorner.Parent       = StatusRow
+
+local StatusDot = Instance.new("Frame")
+StatusDot.Name             = "Dot"
+StatusDot.Size             = UDim2.new(0, 8, 0, 8)
+StatusDot.Position         = UDim2.new(0, 10, 0.5, -4)
+StatusDot.BackgroundColor3 = Color3.fromRGB(100, 100, 130)
+StatusDot.BorderSizePixel  = 0
+StatusDot.Parent           = StatusRow
+
+local DotCorner = Instance.new("UICorner")
+DotCorner.CornerRadius = UDim.new(1, 0)
+DotCorner.Parent       = StatusDot
+
+local StatusLabel = Instance.new("TextLabel")
+StatusLabel.Name             = "StatusLabel"
+StatusLabel.Size             = UDim2.new(1, -28, 1, 0)
+StatusLabel.Position         = UDim2.new(0, 26, 0, 0)
+StatusLabel.BackgroundTransparency = 1
+StatusLabel.Text             = "Status: Idle"
+StatusLabel.TextColor3       = Color3.fromRGB(170, 155, 210)
+StatusLabel.Font             = Enum.Font.Gotham
+StatusLabel.TextSize         = 12
+StatusLabel.TextXAlignment   = Enum.TextXAlignment.Left
+StatusLabel.Parent           = StatusRow
+
+-- ── Start / Stop Button ──────────────────────────────────────
+local StartBtn = Instance.new("TextButton")
+StartBtn.Name             = "StartBtn"
+StartBtn.Size             = UDim2.new(1, 0, 0, 42)
+StartBtn.BackgroundColor3 = Color3.fromRGB(90, 55, 200)
+StartBtn.Text             = "▶  START"
+StartBtn.TextColor3       = Color3.fromRGB(255, 255, 255)
+StartBtn.Font             = Enum.Font.GothamBold
+StartBtn.TextSize         = 14
+StartBtn.BorderSizePixel  = 0
+StartBtn.Parent           = Content
+
+local StartCorner = Instance.new("UICorner")
+StartCorner.CornerRadius = UDim.new(0, 8)
+StartCorner.Parent       = StartBtn
+
+-- Gradient on the button
+local BtnGrad = Instance.new("UIGradient")
+BtnGrad.Color    = ColorSequence.new({
+	ColorSequenceKeypoint.new(0,   Color3.fromRGB(110, 65, 230)),
+	ColorSequenceKeypoint.new(1,   Color3.fromRGB(70,  40, 170)),
+})
+BtnGrad.Rotation = 90
+BtnGrad.Parent   = StartBtn
+
+-- ============================================================
+--  GUI LOGIC: Update status display
+-- ============================================================
+
+local function setStatus(msg, running)
+	StatusLabel.Text = "Status: " .. msg
+
+	-- Green dot when running, grey when idle
+	if running then
+		StatusDot.BackgroundColor3 = Color3.fromRGB(80, 220, 120)
+	else
+		StatusDot.BackgroundColor3 = Color3.fromRGB(100, 100, 130)
+	end
+end
+
+-- ============================================================
+--  GUI LOGIC: Read config values from text boxes
+--  Validates numbers and falls back to defaults if invalid
+-- ============================================================
+
+local function applyConfigFromGUI()
+	-- Case name (just use whatever string is typed)
+	local name = CaseNameBox.Text
+	if name and name ~= "" then
+		CONFIG.CASE_NAME = name
+	end
+
+	-- Sell delay — must be a positive number
+	local delay = tonumber(SellDelayBox.Text)
+	if delay and delay > 0 then
+		CONFIG.SELL_DELAY = delay
+	else
+		SellDelayBox.Text = tostring(CONFIG.SELL_DELAY) -- reset to last valid
+		debugLog("Invalid sell delay — keeping: " .. CONFIG.SELL_DELAY)
+	end
+
+	-- Keep value threshold — must be a non-negative number
+	local threshold = tonumber(ThresholdBox.Text)
+	if threshold and threshold >= 0 then
+		CONFIG.KEEP_VALUE_THRESHOLD = threshold
+	else
+		ThresholdBox.Text = tostring(CONFIG.KEEP_VALUE_THRESHOLD)
+		debugLog("Invalid threshold — keeping: " .. CONFIG.KEEP_VALUE_THRESHOLD)
+	end
+
+	debugLog("Config applied → Case: " .. CONFIG.CASE_NAME ..
+		" | Delay: " .. CONFIG.SELL_DELAY ..
+		" | Threshold: " .. CONFIG.KEEP_VALUE_THRESHOLD)
+end
+
+-- ============================================================
+--  CORE: Main auto-loop (runs in its own task thread)
+-- ============================================================
+
+local function runLoop()
+	while isRunning do
+		-- Read the latest GUI values each loop
+		applyConfigFromGUI()
+
+		-- STEP 1: Open the case
+		setStatus("Opening: " .. CONFIG.CASE_NAME, true)
+		debugLog("Opening case: " .. CONFIG.CASE_NAME)
+		openCase(CONFIG.CASE_NAME)
+
+		-- STEP 2: Countdown while waiting to sell
+		local elapsed = 0
+		while elapsed < CONFIG.SELL_DELAY and isRunning do
+			local remaining = CONFIG.SELL_DELAY - elapsed
+			setStatus("Selling in " .. math.ceil(remaining) .. "s…", true)
+			task.wait(1)
+			elapsed += 1
+		end
+
+		-- If stopped mid-wait, exit cleanly
+		if not isRunning then break end
+
+		-- STEP 3: Sell low-value items
+		setStatus("Selling items…", true)
+		local sold, kept = sellLowValueItems()
+		setStatus("Sold " .. sold .. " | Kept " .. kept, true)
+		task.wait(2) -- brief pause so user can see the result
+
+		-- STEP 4: Short pause before next case
+		if isRunning then
+			setStatus("Next case in " .. CONFIG.LOOP_DELAY .. "s…", true)
+			task.wait(CONFIG.LOOP_DELAY)
+		end
+	end
+
+	-- Loop ended (user pressed Stop)
+	setStatus("Idle", false)
+	debugLog("Loop stopped.")
+end
+
+-- ============================================================
+--  GUI LOGIC: Start / Stop button
+-- ============================================================
+
+StartBtn.MouseButton1Click:Connect(function()
+	if not isRunning then
+		-- ── START ──
+		isRunning = true
+
+		-- Update button appearance to show "Stop" state
+		StartBtn.Text             = "■  STOP"
+		StartBtn.BackgroundColor3 = Color3.fromRGB(180, 40, 60)
+		BtnGrad.Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, Color3.fromRGB(210, 55, 75)),
+			ColorSequenceKeypoint.new(1, Color3.fromRGB(150, 30, 50)),
+		})
+
+		setStatus("Starting…", true)
+
+		-- Spin up the loop in a separate task (so GUI stays responsive)
+		loopThread = task.spawn(runLoop)
+
+	else
+		-- ── STOP ──
+		isRunning = false
+
+		-- Update button back to "Start" state
+		StartBtn.Text             = "▶  START"
+		StartBtn.BackgroundColor3 = Color3.fromRGB(90, 55, 200)
+		BtnGrad.Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, Color3.fromRGB(110, 65, 230)),
+			ColorSequenceKeypoint.new(1, Color3.fromRGB(70,  40, 170)),
+		})
+
+		setStatus("Stopping…", false)
+		debugLog("Stop requested by user.")
+	end
+end)
+
+-- ============================================================
+--  GUI LOGIC: Hover effects on Start/Stop button
+-- ============================================================
+
+StartBtn.MouseEnter:Connect(function()
+	TweenService:Create(StartBtn, TweenInfo.new(0.15), {
+		BackgroundTransparency = 0.15
+	}):Play()
+end)
+
+StartBtn.MouseLeave:Connect(function()
+	TweenService:Create(StartBtn, TweenInfo.new(0.15), {
+		BackgroundTransparency = 0
+	}):Play()
+end)
+
+-- ============================================================
+--  GUI LOGIC: Minimise / Restore button
+-- ============================================================
+
+local isMinimised = false
+
+MinBtn.MouseButton1Click:Connect(function()
+	isMinimised = not isMinimised
+
+	if isMinimised then
+		-- Collapse to just the title bar
+		TweenService:Create(Window, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {
+			Size = UDim2.new(0, 320, 0, 46)
+		}):Play()
+		MinBtn.Text = "+"
+	else
+		-- Restore full height
+		TweenService:Create(Window, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {
+			Size = UDim2.new(0, 320, 0, 370)
+		}):Play()
+		MinBtn.Text = "–"
+	end
+end)
+
+-- ============================================================
+--  GUI LOGIC: Drag to move the window
+-- ============================================================
+
+local dragging     = false
+local dragStart    = nil   -- mouse position when drag began
+local startPos     = nil   -- window position when drag began
+
+TitleBar.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or
+		input.UserInputType == Enum.UserInputType.Touch then
+		dragging  = true
+		dragStart = input.Position
+		startPos  = Window.Position
+	end
+end)
+
+TitleBar.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or
+		input.UserInputType == Enum.UserInputType.Touch then
+		dragging = false
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if dragging and (
+		input.UserInputType == Enum.UserInputType.MouseMovement or
+			input.UserInputType == Enum.UserInputType.Touch
+		) then
+		local delta = input.Position - dragStart
+		Window.Position = UDim2.new(
+			startPos.X.Scale,
+			startPos.X.Offset + delta.X,
+			startPos.Y.Scale,
+			startPos.Y.Offset + delta.Y
+		)
+	end
+end)
+
+-- ============================================================
+--  DONE — GUI is live!
+-- ============================================================
+
+debugLog("GUI loaded. Configure settings and press START.")
