@@ -3,7 +3,7 @@
 --  Executor-safe: use with loadstring(game:HttpGet("..."))()
 -- ============================================================
 
-wait(2) -- wait for game to fully load
+wait(2)
 
 -- ============================================================
 --  SERVICES
@@ -13,18 +13,30 @@ local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService      = game:GetService("TweenService")
 local UserInputService  = game:GetService("UserInputService")
-
 local LocalPlayer       = Players.LocalPlayer
+
+-- ============================================================
+--  CASES LIST
+-- ============================================================
+
+local CASES = {
+	{ name = "Starter Case",  price = 4.00  },
+	{ name = "Advanced Case", price = 11.00 },
+	{ name = "Elite Case",    price = 29.00 },
+	{ name = "Ultra Case",    price = 110.00 },
+	{ name = "Master Case",   price = 940.00 },
+}
 
 -- ============================================================
 --  CONFIG
 -- ============================================================
 
 local CONFIG = {
-	CASE_NAME            = "Starter Case",
-	SELL_DELAY           = 60,
-	KEEP_VALUE_THRESHOLD = 500,
-	LOOP_DELAY           = 5,
+	CASE_INDEX           = 1,     -- which case is selected (index into CASES)
+	OPEN_COUNT           = 1,     -- how many cases to open per loop (1-5)
+	SELL_DELAY           = 60,    -- seconds to wait before selling
+	KEEP_VALUE_THRESHOLD = 500,   -- sell items worth less than this
+	LOOP_DELAY           = 5,     -- seconds between loops
 	DEBUG                = true,
 }
 
@@ -40,9 +52,7 @@ local loopThread = nil
 -- ============================================================
 
 local function debugLog(msg)
-	if CONFIG.DEBUG then
-		print("[CaseParadise] " .. tostring(msg))
-	end
+	if CONFIG.DEBUG then print("[CaseParadise] " .. tostring(msg)) end
 end
 
 local function findRemote(name)
@@ -99,12 +109,10 @@ local function sellLowValueItems()
 end
 
 -- ============================================================
---  GUI PARENT - executor safe
---  Tries gethui() first, then CoreGui, then PlayerGui
+--  GUI PARENT
 -- ============================================================
 
 local guiParent
-
 if gethui then
 	guiParent = gethui()
 	debugLog("Using gethui()")
@@ -119,7 +127,6 @@ else
 	end
 end
 
--- Remove old GUI if it exists
 local existing = guiParent:FindFirstChild("CaseParadiseGUI")
 if existing then existing:Destroy() end
 
@@ -134,11 +141,13 @@ ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 ScreenGui.DisplayOrder   = 999
 ScreenGui.Parent         = guiParent
 
--- Main window
+-- Window height is taller now to fit new elements
+local WINDOW_HEIGHT = 460
+
 local Window = Instance.new("Frame", ScreenGui)
 Window.Name             = "Window"
-Window.Size             = UDim2.new(0, 320, 0, 370)
-Window.Position         = UDim2.new(0.5, -160, 0.5, -185)
+Window.Size             = UDim2.new(0, 320, 0, WINDOW_HEIGHT)
+Window.Position         = UDim2.new(0.5, -160, 0.5, -230)
 Window.BackgroundColor3 = Color3.fromRGB(14, 14, 20)
 Window.BorderSizePixel  = 0
 Window.ClipsDescendants = true
@@ -153,7 +162,7 @@ TitleBar.Size             = UDim2.new(1, 0, 0, 46)
 TitleBar.BackgroundColor3 = Color3.fromRGB(22, 16, 40)
 TitleBar.BorderSizePixel  = 0
 Instance.new("UICorner", TitleBar).CornerRadius = UDim.new(0, 12)
-local TitleFix = Instance.new("Frame", TitleBar) -- square off bottom corners
+local TitleFix = Instance.new("Frame", TitleBar)
 TitleFix.Size = UDim2.new(1, 0, 0.5, 0); TitleFix.Position = UDim2.new(0, 0, 0.5, 0)
 TitleFix.BackgroundColor3 = Color3.fromRGB(22, 16, 40); TitleFix.BorderSizePixel = 0
 local TitleAccent = Instance.new("Frame", TitleBar)
@@ -175,72 +184,246 @@ Instance.new("UICorner", MinBtn).CornerRadius = UDim.new(0, 6)
 
 -- Content area
 local Content = Instance.new("Frame", Window)
-Content.Name = "Content"; Content.Size = UDim2.new(1, 0, 1, -46)
-Content.Position = UDim2.new(0, 0, 0, 46); Content.BackgroundTransparency = 1
+Content.Name = "Content"
+Content.Size = UDim2.new(1, 0, 1, -46)
+Content.Position = UDim2.new(0, 0, 0, 46)
+Content.BackgroundTransparency = 1
 local CL = Instance.new("UIListLayout", Content)
-CL.Padding = UDim.new(0, 10); CL.HorizontalAlignment = Enum.HorizontalAlignment.Center
+CL.Padding = UDim.new(0, 10)
+CL.HorizontalAlignment = Enum.HorizontalAlignment.Center
 local CP = Instance.new("UIPadding", Content)
 CP.PaddingTop = UDim.new(0, 14); CP.PaddingBottom = UDim.new(0, 14)
 CP.PaddingLeft = UDim.new(0, 16); CP.PaddingRight = UDim.new(0, 16)
 
--- Input row builder
-local function makeInputRow(labelText, defaultValue, placeholder)
-	local Row = Instance.new("Frame", Content)
-	Row.Name = labelText; Row.Size = UDim2.new(1, 0, 0, 54)
-	Row.BackgroundColor3 = Color3.fromRGB(20, 18, 32); Row.BorderSizePixel = 0
-	Instance.new("UICorner", Row).CornerRadius = UDim.new(0, 8)
-	local s = Instance.new("UIStroke", Row); s.Color = Color3.fromRGB(50, 40, 80); s.Thickness = 1
-
-	local Lbl = Instance.new("TextLabel", Row)
-	Lbl.Size = UDim2.new(1, -12, 0, 18); Lbl.Position = UDim2.new(0, 10, 0, 6)
-	Lbl.BackgroundTransparency = 1; Lbl.Text = labelText
-	Lbl.TextColor3 = Color3.fromRGB(150, 130, 200); Lbl.Font = Enum.Font.Gotham
-	Lbl.TextSize = 11; Lbl.TextXAlignment = Enum.TextXAlignment.Left
-
-	local Box = Instance.new("TextBox", Row)
-	Box.Size = UDim2.new(1, -20, 0, 24); Box.Position = UDim2.new(0, 10, 0, 24)
-	Box.BackgroundColor3 = Color3.fromRGB(30, 26, 50); Box.Text = tostring(defaultValue)
-	Box.PlaceholderText = placeholder or ""; Box.PlaceholderColor3 = Color3.fromRGB(80, 70, 110)
-	Box.TextColor3 = Color3.fromRGB(230, 220, 255); Box.Font = Enum.Font.GothamMedium
-	Box.TextSize = 13; Box.ClearTextOnFocus = false; Box.BorderSizePixel = 0
-	Box.TextXAlignment = Enum.TextXAlignment.Left
-	Instance.new("UICorner", Box).CornerRadius = UDim.new(0, 5)
-	Instance.new("UIPadding", Box).PaddingLeft = UDim.new(0, 8)
-	return Box
+-- ── Helper: section label ────────────────────────────────────
+local function makeLabel(text)
+	local Lbl = Instance.new("TextLabel", Content)
+	Lbl.Size = UDim2.new(1, 0, 0, 16)
+	Lbl.BackgroundTransparency = 1
+	Lbl.Text = text
+	Lbl.TextColor3 = Color3.fromRGB(150, 130, 200)
+	Lbl.Font = Enum.Font.Gotham
+	Lbl.TextSize = 11
+	Lbl.TextXAlignment = Enum.TextXAlignment.Left
+	return Lbl
 end
 
-local CaseNameBox  = makeInputRow("CASE NAME",            CONFIG.CASE_NAME,            "e.g. Starter Case")
-local SellDelayBox = makeInputRow("SELL DELAY (seconds)", CONFIG.SELL_DELAY,            "e.g. 60")
-local ThresholdBox = makeInputRow("KEEP VALUE THRESHOLD", CONFIG.KEEP_VALUE_THRESHOLD,  "e.g. 500")
+-- ── Helper: styled row container ────────────────────────────
+local function makeRow(height)
+	local Row = Instance.new("Frame", Content)
+	Row.Size = UDim2.new(1, 0, 0, height or 36)
+	Row.BackgroundColor3 = Color3.fromRGB(20, 18, 32)
+	Row.BorderSizePixel = 0
+	Instance.new("UICorner", Row).CornerRadius = UDim.new(0, 8)
+	local s = Instance.new("UIStroke", Row)
+	s.Color = Color3.fromRGB(50, 40, 80); s.Thickness = 1
+	return Row
+end
 
--- Status bar
+-- ============================================================
+--  CASE SELECTOR (dropdown-style cycling selector)
+-- ============================================================
+
+makeLabel("CASE")
+
+local CaseRow = makeRow(36)
+
+-- Left arrow button
+local CaseLeft = Instance.new("TextButton", CaseRow)
+CaseLeft.Size = UDim2.new(0, 32, 1, 0)
+CaseLeft.Position = UDim2.new(0, 0, 0, 0)
+CaseLeft.BackgroundColor3 = Color3.fromRGB(40, 30, 65)
+CaseLeft.Text = "<"
+CaseLeft.TextColor3 = Color3.fromRGB(200, 180, 255)
+CaseLeft.Font = Enum.Font.GothamBold
+CaseLeft.TextSize = 14
+CaseLeft.BorderSizePixel = 0
+Instance.new("UICorner", CaseLeft).CornerRadius = UDim.new(0, 7)
+
+-- Right arrow button
+local CaseRight = Instance.new("TextButton", CaseRow)
+CaseRight.Size = UDim2.new(0, 32, 1, 0)
+CaseRight.Position = UDim2.new(1, -32, 0, 0)
+CaseRight.BackgroundColor3 = Color3.fromRGB(40, 30, 65)
+CaseRight.Text = ">"
+CaseRight.TextColor3 = Color3.fromRGB(200, 180, 255)
+CaseRight.Font = Enum.Font.GothamBold
+CaseRight.TextSize = 14
+CaseRight.BorderSizePixel = 0
+Instance.new("UICorner", CaseRight).CornerRadius = UDim.new(0, 7)
+
+-- Case name + price label in the middle
+local CaseDisplay = Instance.new("TextLabel", CaseRow)
+CaseDisplay.Size = UDim2.new(1, -72, 1, 0)
+CaseDisplay.Position = UDim2.new(0, 36, 0, 0)
+CaseDisplay.BackgroundTransparency = 1
+CaseDisplay.TextColor3 = Color3.fromRGB(230, 220, 255)
+CaseDisplay.Font = Enum.Font.GothamMedium
+CaseDisplay.TextSize = 12
+CaseDisplay.TextXAlignment = Enum.TextXAlignment.Center
+
+-- Function to refresh the display label
+local function updateCaseDisplay()
+	local c = CASES[CONFIG.CASE_INDEX]
+	CaseDisplay.Text = c.name .. "  ($" .. string.format("%.2f", c.price) .. ")"
+end
+updateCaseDisplay()
+
+-- Arrow click handlers
+CaseLeft.MouseButton1Click:Connect(function()
+	CONFIG.CASE_INDEX = CONFIG.CASE_INDEX - 1
+	if CONFIG.CASE_INDEX < 1 then CONFIG.CASE_INDEX = #CASES end
+	updateCaseDisplay()
+end)
+
+CaseRight.MouseButton1Click:Connect(function()
+	CONFIG.CASE_INDEX = CONFIG.CASE_INDEX + 1
+	if CONFIG.CASE_INDEX > #CASES then CONFIG.CASE_INDEX = 1 end
+	updateCaseDisplay()
+end)
+
+-- ============================================================
+--  CASE COUNT SELECTOR (+ / - buttons, 1 to 5)
+-- ============================================================
+
+makeLabel("CASES TO OPEN PER LOOP")
+
+local CountRow = makeRow(36)
+
+local CountMinus = Instance.new("TextButton", CountRow)
+CountMinus.Size = UDim2.new(0, 32, 1, 0)
+CountMinus.Position = UDim2.new(0, 0, 0, 0)
+CountMinus.BackgroundColor3 = Color3.fromRGB(40, 30, 65)
+CountMinus.Text = "-"
+CountMinus.TextColor3 = Color3.fromRGB(200, 180, 255)
+CountMinus.Font = Enum.Font.GothamBold
+CountMinus.TextSize = 16
+CountMinus.BorderSizePixel = 0
+Instance.new("UICorner", CountMinus).CornerRadius = UDim.new(0, 7)
+
+local CountPlus = Instance.new("TextButton", CountRow)
+CountPlus.Size = UDim2.new(0, 32, 1, 0)
+CountPlus.Position = UDim2.new(1, -32, 0, 0)
+CountPlus.BackgroundColor3 = Color3.fromRGB(40, 30, 65)
+CountPlus.Text = "+"
+CountPlus.TextColor3 = Color3.fromRGB(200, 180, 255)
+CountPlus.Font = Enum.Font.GothamBold
+CountPlus.TextSize = 16
+CountPlus.BorderSizePixel = 0
+Instance.new("UICorner", CountPlus).CornerRadius = UDim.new(0, 7)
+
+local CountDisplay = Instance.new("TextLabel", CountRow)
+CountDisplay.Size = UDim2.new(1, -72, 1, 0)
+CountDisplay.Position = UDim2.new(0, 36, 0, 0)
+CountDisplay.BackgroundTransparency = 1
+CountDisplay.Text = "1"
+CountDisplay.TextColor3 = Color3.fromRGB(230, 220, 255)
+CountDisplay.Font = Enum.Font.GothamBold
+CountDisplay.TextSize = 14
+CountDisplay.TextXAlignment = Enum.TextXAlignment.Center
+
+local function updateCountDisplay()
+	CountDisplay.Text = tostring(CONFIG.OPEN_COUNT)
+end
+
+CountMinus.MouseButton1Click:Connect(function()
+	if CONFIG.OPEN_COUNT > 1 then
+		CONFIG.OPEN_COUNT = CONFIG.OPEN_COUNT - 1
+		updateCountDisplay()
+	end
+end)
+
+CountPlus.MouseButton1Click:Connect(function()
+	if CONFIG.OPEN_COUNT < 5 then
+		CONFIG.OPEN_COUNT = CONFIG.OPEN_COUNT + 1
+		updateCountDisplay()
+	end
+end)
+
+-- ============================================================
+--  SELL DELAY ROW
+-- ============================================================
+
+makeLabel("SELL DELAY (seconds)")
+
+local DelayRow = makeRow(36)
+local SellDelayBox = Instance.new("TextBox", DelayRow)
+SellDelayBox.Size = UDim2.new(1, -16, 1, -8)
+SellDelayBox.Position = UDim2.new(0, 8, 0, 4)
+SellDelayBox.BackgroundTransparency = 1
+SellDelayBox.Text = tostring(CONFIG.SELL_DELAY)
+SellDelayBox.TextColor3 = Color3.fromRGB(230, 220, 255)
+SellDelayBox.Font = Enum.Font.GothamMedium
+SellDelayBox.TextSize = 13
+SellDelayBox.ClearTextOnFocus = false
+SellDelayBox.BorderSizePixel = 0
+SellDelayBox.TextXAlignment = Enum.TextXAlignment.Center
+
+-- ============================================================
+--  KEEP VALUE THRESHOLD ROW
+-- ============================================================
+
+makeLabel("KEEP VALUE THRESHOLD")
+
+local ThreshRow = makeRow(36)
+local ThresholdBox = Instance.new("TextBox", ThreshRow)
+ThresholdBox.Size = UDim2.new(1, -16, 1, -8)
+ThresholdBox.Position = UDim2.new(0, 8, 0, 4)
+ThresholdBox.BackgroundTransparency = 1
+ThresholdBox.Text = tostring(CONFIG.KEEP_VALUE_THRESHOLD)
+ThresholdBox.TextColor3 = Color3.fromRGB(230, 220, 255)
+ThresholdBox.Font = Enum.Font.GothamMedium
+ThresholdBox.TextSize = 13
+ThresholdBox.ClearTextOnFocus = false
+ThresholdBox.BorderSizePixel = 0
+ThresholdBox.TextXAlignment = Enum.TextXAlignment.Center
+
+-- ============================================================
+--  STATUS BAR
+-- ============================================================
+
 local StatusRow = Instance.new("Frame", Content)
-StatusRow.Size = UDim2.new(1, 0, 0, 32); StatusRow.BackgroundColor3 = Color3.fromRGB(20, 18, 32)
+StatusRow.Size = UDim2.new(1, 0, 0, 32)
+StatusRow.BackgroundColor3 = Color3.fromRGB(20, 18, 32)
 StatusRow.BorderSizePixel = 0
 Instance.new("UICorner", StatusRow).CornerRadius = UDim.new(0, 8)
 
 local StatusDot = Instance.new("Frame", StatusRow)
-StatusDot.Size = UDim2.new(0, 8, 0, 8); StatusDot.Position = UDim2.new(0, 10, 0.5, -4)
-StatusDot.BackgroundColor3 = Color3.fromRGB(100, 100, 130); StatusDot.BorderSizePixel = 0
+StatusDot.Size = UDim2.new(0, 8, 0, 8)
+StatusDot.Position = UDim2.new(0, 10, 0.5, -4)
+StatusDot.BackgroundColor3 = Color3.fromRGB(100, 100, 130)
+StatusDot.BorderSizePixel = 0
 Instance.new("UICorner", StatusDot).CornerRadius = UDim.new(1, 0)
 
 local StatusLabel = Instance.new("TextLabel", StatusRow)
-StatusLabel.Size = UDim2.new(1, -28, 1, 0); StatusLabel.Position = UDim2.new(0, 26, 0, 0)
-StatusLabel.BackgroundTransparency = 1; StatusLabel.Text = "Status: Idle"
-StatusLabel.TextColor3 = Color3.fromRGB(170, 155, 210); StatusLabel.Font = Enum.Font.Gotham
-StatusLabel.TextSize = 12; StatusLabel.TextXAlignment = Enum.TextXAlignment.Left
+StatusLabel.Size = UDim2.new(1, -28, 1, 0)
+StatusLabel.Position = UDim2.new(0, 26, 0, 0)
+StatusLabel.BackgroundTransparency = 1
+StatusLabel.Text = "Status: Idle"
+StatusLabel.TextColor3 = Color3.fromRGB(170, 155, 210)
+StatusLabel.Font = Enum.Font.Gotham
+StatusLabel.TextSize = 12
+StatusLabel.TextXAlignment = Enum.TextXAlignment.Left
 
--- Start/Stop button
+-- ============================================================
+--  START / STOP BUTTON
+-- ============================================================
+
 local StartBtn = Instance.new("TextButton", Content)
-StartBtn.Size = UDim2.new(1, 0, 0, 42); StartBtn.BackgroundColor3 = Color3.fromRGB(90, 55, 200)
-StartBtn.Text = "START"; StartBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-StartBtn.Font = Enum.Font.GothamBold; StartBtn.TextSize = 14; StartBtn.BorderSizePixel = 0
+StartBtn.Size = UDim2.new(1, 0, 0, 42)
+StartBtn.BackgroundColor3 = Color3.fromRGB(90, 55, 200)
+StartBtn.Text = "START"
+StartBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+StartBtn.Font = Enum.Font.GothamBold
+StartBtn.TextSize = 14
+StartBtn.BorderSizePixel = 0
 Instance.new("UICorner", StartBtn).CornerRadius = UDim.new(0, 8)
 local BtnGrad = Instance.new("UIGradient", StartBtn)
 BtnGrad.Color = ColorSequence.new({
 	ColorSequenceKeypoint.new(0, Color3.fromRGB(110, 65, 230)),
 	ColorSequenceKeypoint.new(1, Color3.fromRGB(70, 40, 170)),
-}); BtnGrad.Rotation = 90
+})
+BtnGrad.Rotation = 90
 
 -- ============================================================
 --  GUI LOGIC
@@ -254,11 +437,10 @@ local function setStatus(msg, running)
 end
 
 local function applyConfigFromGUI()
-	local name = CaseNameBox.Text
-	if name and name ~= "" then CONFIG.CASE_NAME = name end
 	local delay = tonumber(SellDelayBox.Text)
 	if delay and delay > 0 then CONFIG.SELL_DELAY = delay
 	else SellDelayBox.Text = tostring(CONFIG.SELL_DELAY) end
+
 	local threshold = tonumber(ThresholdBox.Text)
 	if threshold and threshold >= 0 then CONFIG.KEEP_VALUE_THRESHOLD = threshold
 	else ThresholdBox.Text = tostring(CONFIG.KEEP_VALUE_THRESHOLD) end
@@ -267,20 +449,34 @@ end
 local function runLoop()
 	while isRunning do
 		applyConfigFromGUI()
-		setStatus("Opening: " .. CONFIG.CASE_NAME, true)
-		openCase(CONFIG.CASE_NAME)
+
+		local caseName = CASES[CONFIG.CASE_INDEX].name
+
+		-- Open however many cases the user selected
+		for i = 1, CONFIG.OPEN_COUNT do
+			if not isRunning then break end
+			setStatus("Opening " .. i .. "/" .. CONFIG.OPEN_COUNT .. ": " .. caseName, true)
+			openCase(caseName)
+			wait(0.5) -- small gap between opens
+		end
+
+		-- Countdown to sell
 		local elapsed = 0
 		while elapsed < CONFIG.SELL_DELAY and isRunning do
 			setStatus("Selling in " .. math.ceil(CONFIG.SELL_DELAY - elapsed) .. "s", true)
-			wait(1); elapsed = elapsed + 1
+			wait(1)
+			elapsed = elapsed + 1
 		end
+
 		if not isRunning then break end
+
 		setStatus("Selling items...", true)
 		local sold, kept = sellLowValueItems()
 		setStatus("Sold " .. sold .. " | Kept " .. kept, true)
 		wait(2)
+
 		if isRunning then
-			setStatus("Next case in " .. CONFIG.LOOP_DELAY .. "s", true)
+			setStatus("Next loop in " .. CONFIG.LOOP_DELAY .. "s", true)
 			wait(CONFIG.LOOP_DELAY)
 		end
 	end
@@ -290,7 +486,8 @@ end
 StartBtn.MouseButton1Click:Connect(function()
 	if not isRunning then
 		isRunning = true
-		StartBtn.Text = "STOP"; StartBtn.BackgroundColor3 = Color3.fromRGB(180, 40, 60)
+		StartBtn.Text = "STOP"
+		StartBtn.BackgroundColor3 = Color3.fromRGB(180, 40, 60)
 		BtnGrad.Color = ColorSequence.new({
 			ColorSequenceKeypoint.new(0, Color3.fromRGB(210, 55, 75)),
 			ColorSequenceKeypoint.new(1, Color3.fromRGB(150, 30, 50)),
@@ -299,7 +496,8 @@ StartBtn.MouseButton1Click:Connect(function()
 		loopThread = spawn(runLoop)
 	else
 		isRunning = false
-		StartBtn.Text = "START"; StartBtn.BackgroundColor3 = Color3.fromRGB(90, 55, 200)
+		StartBtn.Text = "START"
+		StartBtn.BackgroundColor3 = Color3.fromRGB(90, 55, 200)
 		BtnGrad.Color = ColorSequence.new({
 			ColorSequenceKeypoint.new(0, Color3.fromRGB(110, 65, 230)),
 			ColorSequenceKeypoint.new(1, Color3.fromRGB(70, 40, 170)),
@@ -315,15 +513,17 @@ StartBtn.MouseLeave:Connect(function()
 	TweenService:Create(StartBtn, TweenInfo.new(0.15), { BackgroundTransparency = 0 }):Play()
 end)
 
+-- Minimise / restore
 local isMinimised = false
 MinBtn.MouseButton1Click:Connect(function()
 	isMinimised = not isMinimised
 	TweenService:Create(Window, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {
-		Size = isMinimised and UDim2.new(0, 320, 0, 46) or UDim2.new(0, 320, 0, 370)
+		Size = isMinimised and UDim2.new(0, 320, 0, 46) or UDim2.new(0, 320, 0, WINDOW_HEIGHT)
 	}):Play()
 	MinBtn.Text = isMinimised and "+" or "-"
 end)
 
+-- Drag to move
 local dragging, dragStart, startPos = false, nil, nil
 TitleBar.InputBegan:Connect(function(input)
 	if input.UserInputType == Enum.UserInputType.MouseButton1 then
