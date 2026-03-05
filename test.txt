@@ -20,11 +20,12 @@ local LocalPlayer       = Players.LocalPlayer
 -- ============================================================
 
 local CASES = {
-	{ name = "Starter Case",  price = 4.00  },
-	{ name = "Advanced Case", price = 11.00 },
-	{ name = "Elite Case",    price = 29.00 },
-	{ name = "Ultra Case",    price = 110.00 },
-	{ name = "Master Case",   price = 940.00 },
+	{ name = "Free Case",     id = "Free",     price = 0.00   },
+	{ name = "Starter Case",  id = "STARTER",  price = 4.00   },
+	{ name = "Advanced Case", id = "ADVANCED", price = 11.00  },
+	{ name = "Elite Case",    id = "ELITE",    price = 29.00  },
+	{ name = "Ultra Case",    id = "ULTRA",    price = 110.00 },
+	{ name = "Master Case",   id = "MASTER",   price = 940.00 },
 }
 
 -- ============================================================
@@ -36,7 +37,7 @@ local CONFIG = {
 	OPEN_COUNT           = 1,     -- how many cases to open per loop (1-5)
 	SELL_DELAY           = 60,    -- seconds to wait before selling
 	KEEP_VALUE_THRESHOLD = 500,   -- sell items worth less than this
-	LOOP_DELAY           = 5,     -- seconds between loops
+	LOOP_DELAY           = 6.5,  -- seconds between each case open
 	DEBUG                = true,
 }
 
@@ -78,45 +79,41 @@ end
 --  CORE FUNCTIONS
 -- ============================================================
 
--- Find the EssentialCases frame in the game GUI
+-- Direct path to EssentialCases frame
 local function getEssentialCasesFrame()
-	for _, v in ipairs(LocalPlayer.PlayerGui:GetDescendants()) do
-		if v.Name == "EssentialCases" then
-			return v
-		end
+	local ok, result = pcall(function()
+		return LocalPlayer.PlayerGui.Windows.Cases.CasesFrame.EssentialCases
+	end)
+	if ok and result then
+		return result
 	end
+	debugLog("ERROR: Could not find EssentialCases at direct path")
 	return nil
 end
 
--- Click a case by its display name e.g. "Starter Case"
-local function openCase(caseName)
-	debugLog("Searching for case button: " .. caseName)
+-- Simulate a real mouse click on a GuiButton using VirtualInputManager
+local function simulateClick(btn)
+	local VIM = game:GetService("VirtualInputManager")
+	local pos = btn.AbsolutePosition
+	local size = btn.AbsoluteSize
+	local cx = pos.X + size.X / 2
+	local cy = pos.Y + size.Y / 2
+	VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
+	wait(0.05)
+	VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+end
 
-	local essentialCases = getEssentialCasesFrame()
-	if not essentialCases then
-		debugLog("ERROR: EssentialCases frame not found. Is the Cases tab open?")
-		return false
+-- Open a case directly via the remote
+-- Args: caseId (string), count (number), false, false
+local function openCase(caseId, count)
+	debugLog("Opening case: " .. caseId .. " x" .. tostring(count))
+	local ok, result = pcall(function()
+		return game:GetService("ReplicatedStorage").Remotes.OpenCase:InvokeServer(caseId, count, false, false)
+	end)
+	if not ok then
+		debugLog("OpenCase error: " .. tostring(result))
 	end
-
-	for _, template in ipairs(essentialCases:GetChildren()) do
-		local nameLabel = template:FindFirstChild("CaseName")
-		if nameLabel and nameLabel:IsA("TextLabel") then
-			if nameLabel.Text == caseName then
-				local clickBtn = template:FindFirstChild("Click")
-				if clickBtn then
-					debugLog("Clicking case: " .. caseName)
-					pcall(function() clickBtn.MouseButton1Click:Fire() end)
-					return true
-				else
-					debugLog("ERROR: Click button not found for " .. caseName)
-					return false
-				end
-			end
-		end
-	end
-
-	debugLog("ERROR: Could not find case named: " .. caseName)
-	return false
+	return ok
 end
 
 -- Click the SellAllButton in the game GUI
@@ -504,41 +501,36 @@ local function applyConfigFromGUI()
 	else ThresholdBox.Text = tostring(CONFIG.KEEP_VALUE_THRESHOLD) end
 end
 
+local totalOpened = 0
+
 local function runLoop()
 	while isRunning do
 		applyConfigFromGUI()
 
-		local caseName = CASES[CONFIG.CASE_INDEX].name
+		local case = CASES[CONFIG.CASE_INDEX]
 
-		-- Open however many cases the user selected
-		for i = 1, CONFIG.OPEN_COUNT do
-			if not isRunning then break end
-			setStatus("Opening " .. i .. "/" .. CONFIG.OPEN_COUNT .. ": " .. caseName, true)
-			openCase(caseName)
-			wait(0.5) -- small gap between opens
+		-- Open cases continuously
+		setStatus("Opening: " .. case.name .. " x" .. CONFIG.OPEN_COUNT, true)
+		local ok = openCase(case.id, CONFIG.OPEN_COUNT)
+
+		if ok then
+			totalOpened = totalOpened + CONFIG.OPEN_COUNT
+			setStatus("Total opened: " .. totalOpened .. " | " .. case.name, true)
 		end
 
-		-- Countdown to sell
-		local elapsed = 0
-		while elapsed < CONFIG.SELL_DELAY and isRunning do
-			setStatus("Selling in " .. math.ceil(CONFIG.SELL_DELAY - elapsed) .. "s", true)
+		-- Small delay between each open to avoid spamming the server
+		wait(CONFIG.LOOP_DELAY)
+
+		-- Sell periodically based on sell delay
+		if totalOpened > 0 and totalOpened % math.max(1, math.floor(CONFIG.SELL_DELAY / 5)) == 0 then
+			setStatus("Selling items...", true)
+			local sold, kept = sellLowValueItems()
+			setStatus("Sold " .. sold .. " | Kept " .. kept .. " | Opened: " .. totalOpened, true)
 			wait(1)
-			elapsed = elapsed + 1
-		end
-
-		if not isRunning then break end
-
-		setStatus("Selling items...", true)
-		local sold, kept = sellLowValueItems()
-		setStatus("Sold " .. sold .. " | Kept " .. kept, true)
-		wait(2)
-
-		if isRunning then
-			setStatus("Next loop in " .. CONFIG.LOOP_DELAY .. "s", true)
-			wait(CONFIG.LOOP_DELAY)
 		end
 	end
-	setStatus("Idle", false)
+	setStatus("Idle - Total opened: " .. totalOpened, false)
+	totalOpened = 0
 end
 
 StartBtn.MouseButton1Click:Connect(function()
