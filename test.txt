@@ -1,4 +1,4 @@
-task.wait(2) -- wait for game to fully load
+wait(2) -- wait for game to fully load
 
 local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -332,3 +332,4 @@ UserInputService.InputChanged:Connect(function(input)
 end)
 
 debugLog("GUI loaded. Parent: " .. tostring(guiParent))
+
