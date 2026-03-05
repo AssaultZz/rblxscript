@@ -1,4 +1,13 @@
+-- ============================================================
+--  Case Paradise | Auto Open & Auto Sell - GUI Script
+--  Executor-safe: use with loadstring(game:HttpGet("..."))()
+-- ============================================================
+
 wait(2) -- wait for game to fully load
+
+-- ============================================================
+--  SERVICES
+-- ============================================================
 
 local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -80,10 +89,10 @@ local function sellLowValueItems()
 	for _, item in ipairs(inventory) do
 		local val = item.Value or item.Price or item.Worth or 0
 		if val < CONFIG.KEEP_VALUE_THRESHOLD then
-			if sellItem(item) then sold += 1 end
-			task.wait(0.1)
+			if sellItem(item) then sold = sold + 1 end
+			wait(0.1)
 		else
-			kept += 1
+			kept = kept + 1
 		end
 	end
 	return sold, kept
@@ -263,16 +272,16 @@ local function runLoop()
 		local elapsed = 0
 		while elapsed < CONFIG.SELL_DELAY and isRunning do
 			setStatus("Selling in " .. math.ceil(CONFIG.SELL_DELAY - elapsed) .. "s", true)
-			task.wait(1); elapsed += 1
+			wait(1); elapsed = elapsed + 1
 		end
 		if not isRunning then break end
 		setStatus("Selling items...", true)
 		local sold, kept = sellLowValueItems()
 		setStatus("Sold " .. sold .. " | Kept " .. kept, true)
-		task.wait(2)
+		wait(2)
 		if isRunning then
 			setStatus("Next case in " .. CONFIG.LOOP_DELAY .. "s", true)
-			task.wait(CONFIG.LOOP_DELAY)
+			wait(CONFIG.LOOP_DELAY)
 		end
 	end
 	setStatus("Idle", false)
@@ -287,7 +296,7 @@ StartBtn.MouseButton1Click:Connect(function()
 			ColorSequenceKeypoint.new(1, Color3.fromRGB(150, 30, 50)),
 		})
 		setStatus("Starting...", true)
-		loopThread = task.spawn(runLoop)
+		loopThread = spawn(runLoop)
 	else
 		isRunning = false
 		StartBtn.Text = "START"; StartBtn.BackgroundColor3 = Color3.fromRGB(90, 55, 200)
@@ -332,4 +341,3 @@ UserInputService.InputChanged:Connect(function(input)
 end)
 
 debugLog("GUI loaded. Parent: " .. tostring(guiParent))
-
