@@ -2,7 +2,7 @@
 --  Case Paradise | Auto Open & Auto Sell - GUI Script
 --  Executor-safe: use with loadstring(game:HttpGet("..."))()
 -- ============================================================
-
+local function main(...)
 task.wait(2) -- wait for game to fully load
 
 -- ============================================================
@@ -340,4 +340,17 @@ UserInputService.InputChanged:Connect(function(input)
 	end
 end)
 
+end
+main()
+```
+
+So your file structure becomes:
+```
+local function main(...)
+    task.wait(2)
+    ... (all your existing code) ...
+end
+main()
+
 debugLog("GUI loaded. Parent: " .. tostring(guiParent))
+
