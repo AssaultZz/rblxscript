@@ -1,13 +1,4 @@
--- ============================================================
---  Case Paradise | Auto Open & Auto Sell - GUI Script
---  Executor-safe: use with loadstring(game:HttpGet("..."))()
--- ============================================================
-
 task.wait(2) -- wait for game to fully load
-
--- ============================================================
---  SERVICES
--- ============================================================
 
 local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
